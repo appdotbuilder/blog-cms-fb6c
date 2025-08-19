@@ -5,6 +5,9 @@ import {
   type Post, 
   type PostsResponse 
 } from '../schema';
+import { db } from '../db';
+import { postsTable, postTagsTable, usersTable, categoriesTable, tagsTable } from '../db/schema';
+import { eq, and, or, ilike, inArray, desc, asc, count, SQL, sql } from 'drizzle-orm';
 
 export async function createPost(input: CreatePostInput): Promise<Post> {
   // This is a placeholder declaration! Real code should be implemented here.
@@ -30,20 +33,129 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
 }
 
 export async function getPosts(input: SearchPostsInput): Promise<PostsResponse> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to fetch posts with advanced filtering, pagination,
-  // sorting, and full-text search capabilities for both admin and public views.
-  return Promise.resolve({
-    posts: [],
-    pagination: {
-      page: input.page,
-      limit: input.limit,
-      total: 0,
-      total_pages: 0,
-      has_prev: false,
-      has_next: false
+  try {
+    // Build conditions array for filtering
+    const conditions: SQL<unknown>[] = [];
+    
+    // Text search across title, excerpt, and content
+    if (input.query) {
+      conditions.push(
+        or(
+          ilike(postsTable.title, `%${input.query}%`),
+          ilike(postsTable.excerpt, `%${input.query}%`),
+          ilike(postsTable.content, `%${input.query}%`)
+        )!
+      );
     }
-  });
+    
+    // Filter by category
+    if (input.category_id) {
+      conditions.push(eq(postsTable.category_id, input.category_id));
+    }
+    
+    // Filter by author
+    if (input.author_id) {
+      conditions.push(eq(postsTable.author_id, input.author_id));
+    }
+    
+    // Filter by status
+    if (input.status) {
+      conditions.push(eq(postsTable.status, input.status));
+    }
+    
+    // Filter by tags (requires subquery)
+    if (input.tag_ids && input.tag_ids.length > 0) {
+      const tagSubquery = db.select({ post_id: postTagsTable.post_id })
+        .from(postTagsTable)
+        .where(inArray(postTagsTable.tag_id, input.tag_ids));
+      
+      conditions.push(
+        inArray(postsTable.id, tagSubquery)
+      );
+    }
+    
+    // Build the WHERE condition
+    const whereCondition = conditions.length === 0 ? undefined : 
+      (conditions.length === 1 ? conditions[0] : and(...conditions));
+    
+    // Get total count for pagination
+    const total = await (async () => {
+      if (whereCondition) {
+        const result = await db.select({ count: count() })
+          .from(postsTable)
+          .where(whereCondition)
+          .execute();
+        return result[0].count;
+      } else {
+        const result = await db.select({ count: count() })
+          .from(postsTable)
+          .execute();
+        return result[0].count;
+      }
+    })();
+    
+    // Build and execute main query
+    const sortColumn = postsTable[input.sort_by];
+    const offset = (input.page - 1) * input.limit;
+    
+    const posts = await (async () => {
+      if (whereCondition) {
+        if (input.sort_order === 'desc') {
+          return await db.select()
+            .from(postsTable)
+            .where(whereCondition)
+            .orderBy(desc(sortColumn))
+            .limit(input.limit)
+            .offset(offset)
+            .execute();
+        } else {
+          return await db.select()
+            .from(postsTable)
+            .where(whereCondition)
+            .orderBy(asc(sortColumn))
+            .limit(input.limit)
+            .offset(offset)
+            .execute();
+        }
+      } else {
+        if (input.sort_order === 'desc') {
+          return await db.select()
+            .from(postsTable)
+            .orderBy(desc(sortColumn))
+            .limit(input.limit)
+            .offset(offset)
+            .execute();
+        } else {
+          return await db.select()
+            .from(postsTable)
+            .orderBy(asc(sortColumn))
+            .limit(input.limit)
+            .offset(offset)
+            .execute();
+        }
+      }
+    })();
+    
+    // Calculate pagination metadata
+    const total_pages = Math.ceil(total / input.limit);
+    const has_prev = input.page > 1;
+    const has_next = input.page < total_pages;
+    
+    return {
+      posts,
+      pagination: {
+        page: input.page,
+        limit: input.limit,
+        total,
+        total_pages,
+        has_prev,
+        has_next
+      }
+    };
+  } catch (error) {
+    console.error('Posts retrieval failed:', error);
+    throw error;
+  }
 }
 
 export async function getPostById(id: number): Promise<Post | null> {

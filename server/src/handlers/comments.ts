@@ -1,21 +1,51 @@
+import { db } from '../db';
+import { commentsTable, postsTable } from '../db/schema';
 import { type CreateCommentInput, type UpdateCommentInput, type Comment } from '../schema';
+import { eq } from 'drizzle-orm';
 
 export async function createComment(input: CreateCommentInput): Promise<Comment> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to create a new comment with spam detection,
-  // content validation, and notification system for post authors.
-  return Promise.resolve({
-    id: 1,
-    post_id: input.post_id,
-    author_name: input.author_name,
-    author_email: input.author_email,
-    author_website: input.author_website || null,
-    content: input.content,
-    status: 'pending',
-    parent_id: input.parent_id || null,
-    created_at: new Date(),
-    updated_at: new Date()
-  });
+  try {
+    // Verify the post exists
+    const posts = await db.select()
+      .from(postsTable)
+      .where(eq(postsTable.id, input.post_id))
+      .execute();
+
+    if (posts.length === 0) {
+      throw new Error(`Post with id ${input.post_id} not found`);
+    }
+
+    // If parent_id is provided, verify the parent comment exists
+    if (input.parent_id) {
+      const parentComments = await db.select()
+        .from(commentsTable)
+        .where(eq(commentsTable.id, input.parent_id))
+        .execute();
+
+      if (parentComments.length === 0) {
+        throw new Error(`Parent comment with id ${input.parent_id} not found`);
+      }
+    }
+
+    // Insert the new comment
+    const result = await db.insert(commentsTable)
+      .values({
+        post_id: input.post_id,
+        author_name: input.author_name,
+        author_email: input.author_email,
+        author_website: input.author_website || null,
+        content: input.content,
+        status: 'pending', // Default status for moderation
+        parent_id: input.parent_id || null
+      })
+      .returning()
+      .execute();
+
+    return result[0];
+  } catch (error) {
+    console.error('Comment creation failed:', error);
+    throw error;
+  }
 }
 
 export async function getCommentsByPost(postId: number): Promise<Comment[]> {

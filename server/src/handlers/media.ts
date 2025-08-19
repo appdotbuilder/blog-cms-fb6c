@@ -1,22 +1,40 @@
+import { db } from '../db';
+import { mediaTable, usersTable } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import { type CreateMediaInput, type UpdateMediaInput, type Media } from '../schema';
 
 export async function uploadMedia(input: CreateMediaInput): Promise<Media> {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is to process file uploads, validate file types,
-  // generate thumbnails for images, and store file metadata in the database.
-  return Promise.resolve({
-    id: 1,
-    filename: input.filename,
-    original_filename: input.original_filename,
-    file_path: input.file_path,
-    file_size: input.file_size,
-    mime_type: input.mime_type,
-    alt_text: input.alt_text || null,
-    caption: input.caption || null,
-    uploaded_by: input.uploaded_by,
-    created_at: new Date(),
-    updated_at: new Date()
-  });
+  try {
+    // Verify that the user exists
+    const user = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, input.uploaded_by))
+      .execute();
+
+    if (!user.length) {
+      throw new Error(`User with ID ${input.uploaded_by} does not exist`);
+    }
+
+    // Insert media record
+    const result = await db.insert(mediaTable)
+      .values({
+        filename: input.filename,
+        original_filename: input.original_filename,
+        file_path: input.file_path,
+        file_size: input.file_size,
+        mime_type: input.mime_type,
+        alt_text: input.alt_text || null,
+        caption: input.caption || null,
+        uploaded_by: input.uploaded_by
+      })
+      .returning()
+      .execute();
+
+    return result[0];
+  } catch (error) {
+    console.error('Media upload failed:', error);
+    throw error;
+  }
 }
 
 export async function getMediaLibrary(page: number = 1, limit: number = 20): Promise<{ media: Media[]; total: number }> {
